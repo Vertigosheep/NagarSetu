@@ -94,12 +94,12 @@ const UploadResolution: React.FC = () => {
         .from('issue-images')
         .getPublicUrl(filePath);
 
-      // Update issue with after image and change status to pending_approval
+      // Update issue with after image and change status to resolved
       const { error: updateError } = await supabase
         .from('issues')
         .update({
           after_image: publicUrl,
-          status: 'pending_approval',
+          status: 'resolved',
           completed_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         })
@@ -124,12 +124,36 @@ const UploadResolution: React.FC = () => {
         .insert({
           issue_id: issue.id,
           official_id: user.id,
-          note: 'Issue marked as resolved and submitted for admin approval with after photo.'
+          note: 'Issue marked as resolved with after photo uploaded.'
         });
+
+      // Notify the citizen who reported the issue
+      try {
+        const { data: issueData } = await supabase
+          .from('issues')
+          .select('created_by, title')
+          .eq('id', issue.id)
+          .single();
+
+        if (issueData?.created_by) {
+          await supabase
+            .from('notifications')
+            .insert({
+              user_id: issueData.created_by,
+              title: '✅ Your Issue Has Been Resolved',
+              message: `Your issue "${issueData.title || 'Issue #' + issue.id.slice(0, 8)}" has been marked as resolved. Please check the resolution and provide feedback.`,
+              type: 'success',
+              issue_id: issue.id,
+              created_at: new Date().toISOString()
+            });
+        }
+      } catch (notifError) {
+        console.warn('Failed to send notification to citizen (non-critical):', notifError);
+      }
 
       // Navigate back to dashboard with success message
       navigate('/official/dashboard', { 
-        state: { message: 'Issue successfully submitted for approval!' }
+        state: { message: 'Issue successfully marked as resolved!' }
       });
     } catch (err: any) {
       console.error('Error submitting resolution:', err);
@@ -295,12 +319,12 @@ const UploadResolution: React.FC = () => {
               ) : (
                 <>
                   <CheckCircle className="w-6 h-6" />
-                  SUBMIT FOR FINAL APPROVAL
+                  MARK AS RESOLVED
                 </>
               )}
             </button>
             <p className="text-sm text-gray-600 dark:text-gray-400 text-center mt-3">
-              This will move the issue to "Pending Approval" and notify the admin
+              This will mark the issue as resolved and notify the citizen
             </p>
           </div>
         </form>

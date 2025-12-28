@@ -111,6 +111,24 @@ const IssueDetails: React.FC = () => {
           note: statusMessages[newStatus] || `Status changed to ${newStatus}`
         });
 
+      // If marking as resolved, notify the citizen
+      if (newStatus === 'resolved') {
+        try {
+          await supabase
+            .from('notifications')
+            .insert({
+              user_id: issue.created_by,
+              title: '✅ Your Issue Has Been Resolved',
+              message: `Your issue "${issue.title || 'Issue #' + issue.id.slice(0, 8)}" has been marked as resolved. Please check the resolution and provide feedback.`,
+              type: 'success',
+              issue_id: issue.id,
+              created_at: new Date().toISOString()
+            });
+        } catch (notifError) {
+          console.warn('Failed to send notification to citizen (non-critical):', notifError);
+        }
+      }
+
       // Update local state
       setIssue({ ...issue, status: newStatus });
       
@@ -749,13 +767,23 @@ const IssueDetails: React.FC = () => {
                 )}
                 
                 {issue.status !== 'resolved' && (
-                  <button
-                    onClick={handleMarkResolved}
-                    className="flex items-center justify-center gap-2 px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium"
-                  >
-                    <CheckCircle className="w-5 h-5" />
-                    Mark Resolved
-                  </button>
+                  <div className="flex flex-col gap-2">
+                    <button
+                      onClick={() => handleStatusChange('resolved')}
+                      disabled={actionLoading}
+                      className="flex items-center justify-center gap-2 px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium disabled:opacity-50"
+                    >
+                      <CheckCircle className="w-5 h-5" />
+                      Mark Resolved
+                    </button>
+                    <button
+                      onClick={handleMarkResolved}
+                      className="flex items-center justify-center gap-2 px-3 py-2 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-colors font-medium text-sm"
+                    >
+                      <Camera className="w-4 h-4" />
+                      With Photo
+                    </button>
+                  </div>
                 )}
               </div>
 
