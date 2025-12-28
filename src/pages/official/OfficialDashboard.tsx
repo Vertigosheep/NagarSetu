@@ -32,6 +32,40 @@ const OfficialDashboard: React.FC = () => {
   useEffect(() => {
     fetchUserAndData();
     setupRealtimeSubscription();
+    
+    // Set up interval to check for new unassigned issues (for Pradhan)
+    const checkForNewIssues = async () => {
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (authUser?.email === 'abhitest1290@gmail.com') {
+        const { data: unassignedIssues } = await supabase
+          .from('issues')
+          .select('id, title, category')
+          .is('assigned_to', null);
+          
+        if (unassignedIssues && unassignedIssues.length > 0) {
+          console.log(`Found ${unassignedIssues.length} new unassigned issues, auto-assigning to Pradhan`);
+          
+          await supabase
+            .from('issues')
+            .update({ 
+              assigned_to: authUser.id,
+              status: 'assigned',
+              updated_at: new Date().toISOString()
+            })
+            .in('id', unassignedIssues.map(issue => issue.id));
+            
+          // Refresh data after assignment
+          fetchUserAndData();
+        }
+      }
+    };
+    
+    // Check every 30 seconds for new issues (only for Pradhan)
+    const interval = setInterval(checkForNewIssues, 30000);
+    
+    return () => {
+      clearInterval(interval);
+    };
   }, []);
 
   useEffect(() => {
@@ -54,63 +88,116 @@ const OfficialDashboard: React.FC = () => {
         .eq('id', authUser.id)
         .single();
 
-      // TEMPORARY: Allow all user types for testing
-      // TODO: In production, uncomment the check below
-      /*
-      if (profile?.user_type !== 'official') {
-        navigate('/official/login');
-        return;
-      }
-      */
-
       setUser(profile);
 
-      // DEMO MODE: Fetch ALL issues instead of just assigned ones
-      // TODO: In production, uncomment the assigned filter below
+      // PRADHAN MODE: Check if this is the Pradhan account
+      const isPradhan = authUser.email === 'abhitest1290@gmail.com';
       
-      // Fetch all issues for demo
-      const { data: tasksData } = await supabase
-        .from('issues')
-        .select('*')
-        .order('created_at', { ascending: false });
+      if (isPradhan) {
+        // For Pradhan: Show all issues and assign them automatically (Pradhan handles all departments)
+        const { data: allIssues } = await supabase
+          .from('issues')
+          .select('*')
+          .order('created_at', { ascending: false });
 
-      if (tasksData) {
-        setTasks(tasksData);
-        
-        // Calculate demo stats from all issues
-        const demoStats = {
-          new_assigned: tasksData.filter(t => t.status === 'assigned' || t.status === 'reported').length,
-          in_progress: tasksData.filter(t => t.status === 'in_progress').length,
-          pending_approval: tasksData.filter(t => t.status === 'pending_approval').length,
-          critical_count: tasksData.filter(t => t.urgency === 'critical').length,
-          total_assigned: tasksData.length
-        };
-        setStats(demoStats);
+        if (allIssues) {
+          // Auto-assign ALL unassigned issues to Pradhan (regardless of department/category)
+          const unassignedIssues = allIssues.filter(issue => !issue.assigned_to);
+          
+          if (unassignedIssues.length > 0) {
+            console.log(`Auto-assigning ${unassignedIssues.length} issues to Pradhan (all departments)`);
+            
+            // Batch update unassigned issues
+            const { error: assignError } = await supabase
+              .from('issues')
+              .update({ 
+                assigned_to: authUser.id,
+                status: 'assigned',
+                updated_at: new Date().toISOString()
+              })
+              .in('id', unassignedIssues.map(issue => issue.id));
+
+            if (assignError) {
+              console.error('Error auto-assigning issues to Pradhan:', assignError);
+            } else {
+              console.log(`✅ Successfully auto-assigned ${unassignedIssues.length} issues to Pradhan`);
+            }
+          }
+
+          // Fetch updated assigned tasks (all issues assigned to Pradhan)
+          const { data: assignedTasks } = await supabase
+            .from('issues')
+            .select('*')
+            .eq('assigned_to', authUser.id)
+            .order('created_at', { ascending: false });
+
+          if (assignedTasks) {
+            setTasks(assignedTasks);
+            
+            // Calculate real-time stats from all assigned tasks
+            const realTimeStats = {
+              new_assigned: assignedTasks.filter(t => t.status === 'assigned' || t.status === 'reported').length,
+              in_progress: assignedTasks.filter(t => t.status === 'in_progress').length,
+              pending_approval: assignedTasks.filter(t => t.status === 'resolved' || t.status === 'pending_approval').length,
+              critical_count: assignedTasks.filter(t => t.urgency === 'critical').length,
+              total_assigned: assignedTasks.length
+            };
+            setStats(realTimeStats);
+            
+            // Debug logging with department breakdown
+            const departmentBreakdown = assignedTasks.reduce((acc, task) => {
+              const dept = task.category || task.department || 'General';
+              acc[dept] = (acc[dept] || 0) + 1;
+              return acc;
+            }, {});
+            
+            console.log('Pradhan Dashboard Stats:', {
+              userId: authUser.id,
+              email: authUser.email,
+              role: 'Pradhan (Village Head)',
+              totalTasks: assignedTasks.length,
+              stats: realTimeStats,
+              departmentBreakdown,
+              taskStatuses: assignedTasks.map(t => ({ 
+                id: t.id.slice(0, 8), 
+                status: t.status, 
+                category: t.category || 'General'
+              }))
+            });
+          }
+        }
+      } else {
+        // For other workers: Show only their assigned tasks (if any)
+        const { data: tasksData } = await supabase
+          .from('issues')
+          .select('*')
+          .eq('assigned_to', authUser.id)
+          .order('created_at', { ascending: false });
+
+        if (tasksData) {
+          setTasks(tasksData);
+          
+          // Calculate real-time stats from assigned tasks
+          const realTimeStats = {
+            new_assigned: tasksData.filter(t => t.status === 'assigned' || t.status === 'reported').length,
+            in_progress: tasksData.filter(t => t.status === 'in_progress').length,
+            pending_approval: tasksData.filter(t => t.status === 'resolved' || t.status === 'pending_approval').length,
+            critical_count: tasksData.filter(t => t.urgency === 'critical').length,
+            total_assigned: tasksData.length
+          };
+          setStats(realTimeStats);
+        } else {
+          // No assigned tasks
+          setTasks([]);
+          setStats({
+            new_assigned: 0,
+            in_progress: 0,
+            pending_approval: 0,
+            critical_count: 0,
+            total_assigned: 0
+          });
+        }
       }
-      
-      /* PRODUCTION CODE - Uncomment when ready:
-      // Fetch dashboard stats
-      const { data: statsData } = await supabase
-        .from('official_dashboard_stats')
-        .select('*')
-        .eq('official_id', authUser.id)
-        .single();
-
-      if (statsData) {
-        setStats(statsData);
-      }
-
-      // Fetch only assigned tasks
-      const { data: tasksData } = await supabase
-        .from('issues')
-        .select('*')
-        .eq('assigned_to', authUser.id)
-        .order('created_at', { ascending: false });
-
-      if (tasksData) {
-        setTasks(tasksData);
-      }
-      */
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {
@@ -118,7 +205,10 @@ const OfficialDashboard: React.FC = () => {
     }
   };
 
-  const setupRealtimeSubscription = () => {
+  const setupRealtimeSubscription = async () => {
+    const { data: { user: authUser } } = await supabase.auth.getUser();
+    const isPradhan = authUser?.email === 'abhitest1290@gmail.com';
+    
     const subscription = supabase
       .channel('official-tasks')
       .on('postgres_changes',
@@ -127,8 +217,19 @@ const OfficialDashboard: React.FC = () => {
           schema: 'public',
           table: 'issues'
         },
-        () => {
-          fetchUserAndData();
+        (payload) => {
+          if (authUser) {
+            if (isPradhan) {
+              // For Pradhan: refresh on any issue change (all issues are Pradhan's responsibility)
+              fetchUserAndData();
+            } else {
+              // For other workers: only refresh if the change affects their assigned tasks
+              if (payload.new?.assigned_to === authUser.id || 
+                  payload.old?.assigned_to === authUser.id) {
+                fetchUserAndData();
+              }
+            }
+          }
         }
       )
       .subscribe();
@@ -143,7 +244,12 @@ const OfficialDashboard: React.FC = () => {
 
     // Apply status filter
     if (filterStatus !== 'all') {
-      filtered = filtered.filter(task => task.status === filterStatus);
+      if (filterStatus === 'resolved') {
+        // Show both resolved and pending_approval as "resolved" work
+        filtered = filtered.filter(task => task.status === 'resolved' || task.status === 'pending_approval');
+      } else {
+        filtered = filtered.filter(task => task.status === filterStatus);
+      }
     }
 
     // Apply sorting
@@ -211,10 +317,12 @@ const OfficialDashboard: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      {/* Demo Mode Banner */}
-      <div className="bg-gradient-to-r from-purple-500 to-pink-500 text-white text-center py-3 px-4 text-sm font-medium shadow-lg">
-        🎬 DEMO MODE: Showing ALL issues from the system (not filtered by department or assignment)
-      </div>
+      {/* Pradhan Mode Banner - Show only for Pradhan */}
+      {user?.email === 'abhitest1290@gmail.com' && (
+        <div className="bg-gradient-to-r from-green-500 to-blue-500 text-white text-center py-3 px-4 text-sm font-medium shadow-lg">
+          🏛️ PRADHAN MODE: Village Head - All issues from all departments are assigned to you
+        </div>
+      )}
       
       {/* Header */}
       <header className="bg-white dark:bg-gray-800 shadow-sm border-b border-gray-200 dark:border-gray-700">
@@ -222,10 +330,13 @@ const OfficialDashboard: React.FC = () => {
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-                Welcome, {user?.full_name}
+                Welcome, {user?.email === 'abhitest1290@gmail.com' ? 'Pradhan Ji' : (user?.full_name || 'Worker')}
               </h1>
               <p className="text-sm text-gray-600 dark:text-gray-400">
-                {user?.department} {user?.employee_id && `• ${user.employee_id}`}
+                {user?.email === 'abhitest1290@gmail.com' 
+                  ? 'Village Head • All Departments • All Issues'
+                  : `${user?.department || 'Worker'} ${user?.employee_id ? `• ${user.employee_id}` : ''}`
+                }
               </p>
             </div>
             <div className="flex items-center gap-4">
@@ -250,7 +361,7 @@ const OfficialDashboard: React.FC = () => {
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
           {/* New Assigned */}
           <button
             onClick={() => setFilterStatus(filterStatus === 'assigned' ? 'all' : 'assigned')}
@@ -264,7 +375,7 @@ const OfficialDashboard: React.FC = () => {
               <ClipboardList className="w-8 h-8" />
               <span className="text-3xl font-bold">{stats.new_assigned}</span>
             </div>
-            <p className="text-sm font-medium">NEW ASSIGNED</p>
+            <p className="text-sm font-medium">NEW ISSUES</p>
           </button>
 
           {/* In Progress */}
@@ -280,14 +391,14 @@ const OfficialDashboard: React.FC = () => {
               <Clock className="w-8 h-8" />
               <span className="text-3xl font-bold">{stats.in_progress}</span>
             </div>
-            <p className="text-sm font-medium">IN-PROGRESS</p>
+            <p className="text-sm font-medium">IN PROGRESS</p>
           </button>
 
-          {/* Pending Approval */}
+          {/* Resolved */}
           <button
-            onClick={() => setFilterStatus(filterStatus === 'pending_approval' ? 'all' : 'pending_approval')}
+            onClick={() => setFilterStatus(filterStatus === 'resolved' ? 'all' : 'resolved')}
             className={`p-6 rounded-xl shadow-sm transition-all ${
-              filterStatus === 'pending_approval'
+              filterStatus === 'resolved'
                 ? 'bg-green-600 text-white ring-4 ring-green-200'
                 : 'bg-white dark:bg-gray-800 hover:shadow-md'
             }`}
@@ -296,7 +407,23 @@ const OfficialDashboard: React.FC = () => {
               <CheckCircle className="w-8 h-8" />
               <span className="text-3xl font-bold">{stats.pending_approval}</span>
             </div>
-            <p className="text-sm font-medium">PENDING ADMIN APPROVAL</p>
+            <p className="text-sm font-medium">RESOLVED</p>
+          </button>
+
+          {/* Total Assigned */}
+          <button
+            onClick={() => setFilterStatus('all')}
+            className={`p-6 rounded-xl shadow-sm transition-all ${
+              filterStatus === 'all'
+                ? 'bg-gray-600 text-white ring-4 ring-gray-200'
+                : 'bg-white dark:bg-gray-800 hover:shadow-md'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <AlertTriangle className="w-8 h-8" />
+              <span className="text-3xl font-bold">{stats.total_assigned}</span>
+            </div>
+            <p className="text-sm font-medium">TOTAL ISSUES</p>
           </button>
         </div>
 
@@ -338,11 +465,17 @@ const OfficialDashboard: React.FC = () => {
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-12 text-center">
               <ClipboardList className="w-16 h-16 text-gray-300 dark:text-gray-600 mx-auto mb-4" />
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
-                No tasks found
+                {tasks.length === 0 ? 'No assigned tasks' : 'No tasks found'}
               </h3>
               <p className="text-gray-600 dark:text-gray-400">
-                {filterStatus === 'all' 
+                {tasks.length === 0 
+                  ? user?.email === 'abhitest1290@gmail.com' 
+                    ? 'No issues reported in the village yet. Great job keeping everything running smoothly!'
+                    : 'You have no assigned tasks at the moment. Check back later or contact your supervisor.'
+                  : filterStatus === 'all' 
                   ? 'You have no assigned tasks at the moment.'
+                  : filterStatus === 'resolved'
+                  ? 'No resolved tasks found.'
                   : `No tasks with status: ${filterStatus.replace('_', ' ')}`
                 }
               </p>
@@ -381,8 +514,11 @@ const OfficialDashboard: React.FC = () => {
                     <span>Assigned: {formatDate(task.created_at)}</span>
                     <span className={`px-2 py-1 rounded-full text-xs font-medium ${
                       task.status === 'assigned' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/20' :
+                      task.status === 'reported' ? 'bg-red-100 text-red-700 dark:bg-red-900/20' :
                       task.status === 'in_progress' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/20' :
-                      task.status === 'pending_approval' ? 'bg-green-100 text-green-700 dark:bg-green-900/20' :
+                      task.status === 'resolved' ? 'bg-green-100 text-green-700 dark:bg-green-900/20' :
+                      task.status === 'pending_approval' ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/20' :
+                      task.status === 'closed' ? 'bg-gray-100 text-gray-700 dark:bg-gray-900/20' :
                       'bg-gray-100 text-gray-700 dark:bg-gray-700'
                     }`}>
                       {task.status.replace('_', ' ').toUpperCase()}
