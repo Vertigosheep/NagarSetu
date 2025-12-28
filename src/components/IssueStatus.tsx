@@ -33,6 +33,12 @@ const IssueStatus: React.FC<IssueStatusProps> = ({
         return 'bg-violet-100 text-violet-700';
       case 'resolved':
         return 'bg-green-100 text-green-700';
+      case 'closed':
+        return 'bg-gray-100 text-gray-700';
+      case 'assigned':
+        return 'bg-blue-100 text-blue-700';
+      case 'pending_approval':
+        return 'bg-purple-100 text-purple-700';
       default:
         return 'bg-gray-100 text-gray-700';
     }
@@ -48,6 +54,12 @@ const IssueStatus: React.FC<IssueStatusProps> = ({
         return 'In Progress';
       case 'resolved':
         return 'Resolved';
+      case 'closed':
+        return 'Closed';
+      case 'assigned':
+        return 'Assigned';
+      case 'pending_approval':
+        return 'Pending Approval';
       default:
         return 'Unknown';
     }
