@@ -30,11 +30,12 @@ import {
   LogOut,
   Edit,
   UserPlus,
-  Send
+  Send,
+  Trash2
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { toast } from '@/hooks/use-toast';
-import { getDashboardStats, getIssuesWithPriority } from '@/services/authorityService';
+import { getDashboardStats, getIssuesWithPriority, autoAssignToPradhan, deleteIssue, checkAdminPermissions } from '@/services/authorityService';
 import NotificationCenter from '@/components/NotificationCenter';
 import IssueDetailModal from '@/components/IssueDetailModal';
 import IssueMap from '@/components/IssueMap';
@@ -45,6 +46,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 
 interface Issue {
   id: string;
@@ -108,6 +110,13 @@ export default function AuthorityDashboard() {
   const [assignmentNotes, setAssignmentNotes] = useState('');
   const [isAssigning, setIsAssigning] = useState(false);
 
+  // Delete related state
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [selectedIssueForDeletion, setSelectedIssueForDeletion] = useState<Issue | null>(null);
+  const [deleteReason, setDeleteReason] = useState('');
+  const [deleteConfirmed, setDeleteConfirmed] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
   // Department list for assignment
   const departments = [
     'Public Works',
@@ -139,10 +148,20 @@ export default function AuthorityDashboard() {
           schema: 'public', 
           table: 'issues'
         }, 
-        (payload) => {
+        async (payload) => {
           console.log('New issue reported:', payload);
           if (payload.new) {
             const newIssue = payload.new as Issue;
+            
+            // Auto-assign new issue to Pradhan immediately
+            try {
+              const assignmentResult = await autoAssignToPradhan();
+              if (assignmentResult.success) {
+                console.log('✅ New issue auto-assigned to Pradhan');
+              }
+            } catch (error) {
+              console.error('Failed to auto-assign new issue:', error);
+            }
             
             // Add new issue to the list
             setIssues(prev => [newIssue, ...prev]);
@@ -150,12 +169,26 @@ export default function AuthorityDashboard() {
             // Show notification for new issue
             toast({
               title: "🚨 New Issue Reported",
-              description: `${newIssue.title} - ${newIssue.category}`,
+              description: `${newIssue.title} - Auto-assigned to Pradhan`,
             });
             
-            // Auto-assign critical issues
-            autoAssignCriticalIssue(newIssue);
+            // Refresh dashboard data to get updated statistics
+            setTimeout(() => {
+              fetchDashboardData();
+            }, 1000);
           }
+        }
+      )
+      .on('postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'issues'
+        },
+        (payload) => {
+          console.log('Issue updated:', payload);
+          // Refresh dashboard data when any issue is updated
+          fetchDashboardData();
         }
       )
       .subscribe();
@@ -221,7 +254,13 @@ export default function AuthorityDashboard() {
     try {
       setLoading(true);
       
-      // Fetch dashboard stats and issues
+      // Auto-assign all unassigned issues to Pradhan first
+      const assignmentResult = await autoAssignToPradhan();
+      if (assignmentResult.success && assignmentResult.count > 0) {
+        console.log(`✅ Auto-assigned ${assignmentResult.count} issues to Pradhan`);
+      }
+      
+      // Fetch dashboard stats and issues with real-time data
       const [statsData, issuesData] = await Promise.all([
         getDashboardStats(),
         getIssuesWithPriority()
@@ -229,6 +268,17 @@ export default function AuthorityDashboard() {
 
       setStats(statsData);
       setIssues(issuesData);
+
+      // Log real-time statistics
+      console.log('Admin Dashboard Real-Time Stats:', {
+        totalReports: statsData.totalReports,
+        pendingIssues: statsData.pendingIssues,
+        inProgress: statsData.inProgress,
+        resolvedToday: statsData.resolvedToday,
+        avgResponseTime: statsData.avgResponseTime,
+        satisfactionRate: statsData.satisfactionRate,
+        timestamp: new Date().toISOString()
+      });
 
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
@@ -371,47 +421,174 @@ export default function AuthorityDashboard() {
     return (names[0].charAt(0) + names[names.length - 1].charAt(0)).toUpperCase();
   };
 
-  // Handle issue assignment
+  // Handle issue assignment (now defaults to Pradhan)
   const handleAssignWork = (issue: Issue) => {
+    // Show info that all issues are auto-assigned to Pradhan
+    toast({
+      title: "Auto-Assignment Active",
+      description: "All issues are automatically assigned to Pradhan (Village Head)",
+    });
+    
+    // Still allow viewing the assignment modal for transparency
     setSelectedIssueForAssignment(issue);
-    setSelectedDepartment('');
-    setAssignmentNotes('');
+    setSelectedDepartment('Village Administration');
+    setAssignmentNotes('Auto-assigned to Pradhan - Village Head handles all departments');
     setAssignModalOpen(true);
   };
 
+  // Handle issue deletion
+  const handleDeleteIssue = (issue: Issue) => {
+    setSelectedIssueForDeletion(issue);
+    setDeleteReason('');
+    setDeleteConfirmed(false);
+    setDeleteModalOpen(true);
+  };
+
+  const handleDeleteSubmit = async () => {
+    if (!selectedIssueForDeletion || !deleteReason.trim() || !deleteConfirmed) {
+      toast({
+        title: "Deletion Failed",
+        description: "Please provide a reason and confirm deletion",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsDeleting(true);
+    try {
+      // First check admin permissions
+      const permissionCheck = await checkAdminPermissions();
+      if (!permissionCheck.isAdmin) {
+        throw new Error(permissionCheck.message);
+      }
+
+      console.log('Admin permissions verified, proceeding with deletion');
+
+      // Use the service function for deletion
+      const result = await deleteIssue(
+        selectedIssueForDeletion.id, 
+        deleteReason, 
+        currentUser?.email || 'Unknown Admin'
+      );
+
+      console.log('Delete result:', result);
+
+      // Remove from local state
+      setIssues(prev => prev.filter(issue => issue.id !== selectedIssueForDeletion.id));
+
+      toast({
+        title: "Issue Deleted Successfully",
+        description: `Issue "${selectedIssueForDeletion.title}" has been permanently removed`,
+      });
+
+      // Close modal and reset form
+      setDeleteModalOpen(false);
+      setSelectedIssueForDeletion(null);
+      setDeleteReason('');
+      setDeleteConfirmed(false);
+
+      // Refresh dashboard data to update statistics
+      fetchDashboardData();
+    } catch (error: any) {
+      console.error('Error deleting issue:', error);
+      
+      let errorMessage = error.message || "Failed to delete issue";
+      
+      // Provide specific error messages for common issues
+      if (error.message.includes('RLS') || error.message.includes('policy')) {
+        errorMessage = "Database permissions error. Please run the admin permissions SQL script.";
+      } else if (error.message.includes('not found')) {
+        errorMessage = "Issue not found or already deleted.";
+      } else if (error.message.includes('admin')) {
+        errorMessage = "Admin permissions required for deletion.";
+      }
+
+      toast({
+        title: "Deletion Failed",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   const handleAssignmentSubmit = async () => {
-    if (!selectedIssueForAssignment || !selectedDepartment || !currentUser) return;
+    if (!selectedIssueForAssignment || !currentUser) return;
 
     setIsAssigning(true);
     try {
+      // Get Pradhan's user ID
+      const { data: pradhanUser, error: userError } = await supabase
+        .from('user_profiles')
+        .select('id')
+        .eq('email', 'abhitest1290@gmail.com')
+        .single();
+
+      if (userError || !pradhanUser) {
+        throw new Error('Pradhan user not found');
+      }
+
+      // Build update object with only existing columns
+      const updateData: any = {
+        status: 'assigned',
+        assigned_to: pradhanUser.id,
+        updated_at: new Date().toISOString()
+      };
+
+      // Add optional columns if they exist (will be ignored if they don't exist)
+      if (assignmentNotes) {
+        updateData.assignment_notes = assignmentNotes || 'Assigned to Pradhan - Village Head';
+      }
+      
+      // Try to set assigned_at if column exists
+      updateData.assigned_at = new Date().toISOString();
+      
+      // Set department if column exists
+      updateData.department = 'Village Administration';
+
       const { error } = await supabase
         .from('issues')
-        .update({
-          status: 'in-progress',
-          assigned_to: currentUser.id,
-          department: selectedDepartment,
-          assignment_notes: assignmentNotes,
-          assigned_at: new Date().toISOString()
-        })
+        .update(updateData)
         .eq('id', selectedIssueForAssignment.id);
 
-      if (error) throw error;
+      if (error) {
+        // If error is about missing columns, try with minimal update
+        if (error.message.includes('column') || error.message.includes('schema')) {
+          console.warn('Some columns missing, trying minimal update:', error.message);
+          
+          const minimalUpdate = {
+            status: 'assigned',
+            assigned_to: pradhanUser.id,
+            updated_at: new Date().toISOString()
+          };
+
+          const { error: retryError } = await supabase
+            .from('issues')
+            .update(minimalUpdate)
+            .eq('id', selectedIssueForAssignment.id);
+
+          if (retryError) throw retryError;
+        } else {
+          throw error;
+        }
+      }
 
       // Update local state
       setIssues(prev => prev.map(issue => 
         issue.id === selectedIssueForAssignment.id 
           ? { 
               ...issue, 
-              status: 'in-progress',
-              assigned_to: currentUser.id,
-              department: selectedDepartment
+              status: 'assigned',
+              assigned_to: pradhanUser.id,
+              department: 'Village Administration'
             } 
           : issue
       ));
 
       toast({
-        title: "Work Assigned Successfully",
-        description: `Issue assigned to ${selectedDepartment} department`,
+        title: "Issue Assigned Successfully",
+        description: `Issue assigned to Pradhan (Village Head)`,
       });
 
       // Close modal and reset form
@@ -426,7 +603,7 @@ export default function AuthorityDashboard() {
       console.error('Error assigning work:', error);
       toast({
         title: "Assignment Failed",
-        description: error.message || "Failed to assign work to department",
+        description: error.message || "Failed to assign work to Pradhan",
         variant: "destructive",
       });
     } finally {
@@ -511,6 +688,11 @@ export default function AuthorityDashboard() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* Pradhan System Banner */}
+      <div className="bg-gradient-to-r from-green-500 to-blue-500 text-white text-center py-3 px-4 text-sm font-medium shadow-lg">
+        🏛️ PRADHAN SYSTEM ACTIVE: All issues are automatically assigned to Village Head (abhitest1290@gmail.com)
+      </div>
+      
       {/* Header */}
       <header className="bg-white shadow-sm border-b sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -527,6 +709,20 @@ export default function AuthorityDashboard() {
               <h1 className="text-2xl font-bold text-gray-900">Authority Dashboard</h1>
             </div>
             <div className="flex items-center space-x-4">
+              <Button 
+                variant="outline" 
+                size="sm"
+                onClick={async () => {
+                  const check = await checkAdminPermissions();
+                  toast({
+                    title: check.isAdmin ? "✅ Admin Access Confirmed" : "❌ Admin Access Denied",
+                    description: check.message,
+                    variant: check.isAdmin ? "default" : "destructive",
+                  });
+                }}
+              >
+                Test Admin Access
+              </Button>
               <Button 
                 variant="outline" 
                 size="sm"
@@ -742,17 +938,28 @@ export default function AuthorityDashboard() {
                                 View
                               </Button>
                               
-                              {issue.status === 'reported' && (
+                              {(issue.status === 'reported' || !issue.assigned_to) && (
                                 <Button 
                                   variant="default" 
                                   size="sm"
                                   onClick={() => handleAssignWork(issue)}
-                                  className="bg-blue-600 hover:bg-blue-700"
+                                  className="bg-green-600 hover:bg-green-700"
                                 >
                                   <UserPlus className="h-4 w-4 mr-1" />
-                                  Assign Work
+                                  Assign to Pradhan
                                 </Button>
                               )}
+
+                              {/* Delete Button - Admin Only */}
+                              <Button 
+                                variant="destructive" 
+                                size="sm"
+                                onClick={() => handleDeleteIssue(issue)}
+                                className="bg-red-600 hover:bg-red-700"
+                              >
+                                <Trash2 className="h-4 w-4 mr-1" />
+                                Delete
+                              </Button>
                             </div>
                           </div>
                         </CardContent>
@@ -1082,36 +1289,20 @@ export default function AuthorityDashboard() {
                 </div>
               </div>
 
-              {/* Department Selection */}
+              {/* Department Selection - Pre-filled for Pradhan */}
               <div>
                 <Label htmlFor="department" className="text-sm font-medium mb-2 block">
-                  Assign to Department *
+                  Assigned to Department
                 </Label>
-                <Select 
-                  value={selectedDepartment} 
-                  onValueChange={(value) => {
-                    setSelectedDepartment(value);
-                    // Auto-fill recommended department
-                    if (!selectedDepartment) {
-                      const recommended = getRecommendedDepartment(selectedIssueForAssignment.category);
-                      setSelectedDepartment(recommended);
-                    }
-                  }}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder={`Recommended: ${getRecommendedDepartment(selectedIssueForAssignment.category)}`} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {departments.map((dept) => (
-                      <SelectItem key={dept} value={dept}>
-                        {dept}
-                        {dept === getRecommendedDepartment(selectedIssueForAssignment.category) && (
-                          <span className="ml-2 text-xs text-blue-600">(Recommended)</span>
-                        )}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <span className="text-green-800 font-medium">🏛️ Village Administration</span>
+                    <Badge className="bg-green-100 text-green-800">Pradhan (Village Head)</Badge>
+                  </div>
+                  <p className="text-sm text-green-700 mt-1">
+                    All issues are handled by the Pradhan as per village governance structure
+                  </p>
+                </div>
               </div>
 
               {/* Assignment Notes */}
@@ -1161,18 +1352,146 @@ export default function AuthorityDashboard() {
                 </Button>
                 <Button
                   onClick={handleAssignmentSubmit}
-                  disabled={!selectedDepartment || isAssigning}
-                  className="bg-blue-600 hover:bg-blue-700"
+                  disabled={isAssigning}
+                  className="bg-green-600 hover:bg-green-700"
                 >
                   {isAssigning ? (
                     <span className="flex items-center gap-2">
                       <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                      Assigning...
+                      Assigning to Pradhan...
                     </span>
                   ) : (
                     <span className="flex items-center gap-2">
                       <Send className="h-4 w-4" />
-                      Assign Work
+                      Assign to Pradhan
+                    </span>
+                  )}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+      {/* Delete Confirmation Modal */}
+      <Dialog open={deleteModalOpen} onOpenChange={setDeleteModalOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold text-red-600">Delete Issue</DialogTitle>
+          </DialogHeader>
+          
+          {selectedIssueForDeletion && (
+            <div className="space-y-6">
+              {/* Warning Message */}
+              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="h-6 w-6 text-red-600 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <h3 className="font-semibold text-red-800 mb-1">⚠️ Permanent Deletion Warning</h3>
+                    <p className="text-sm text-red-700">
+                      This action cannot be undone. The issue will be permanently removed from the system.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Issue Summary */}
+              <div className="bg-gray-50 p-4 rounded-lg">
+                <h3 className="font-semibold text-lg mb-2">{selectedIssueForDeletion.title}</h3>
+                <p className="text-gray-600 mb-2">{selectedIssueForDeletion.description}</p>
+                <div className="flex gap-2 text-sm">
+                  <Badge variant="outline">{selectedIssueForDeletion.category}</Badge>
+                  <Badge variant="outline">📍 {selectedIssueForDeletion.location}</Badge>
+                  <Badge variant="outline">📅 {new Date(selectedIssueForDeletion.created_at).toLocaleDateString()}</Badge>
+                  <Badge className={getStatusColor(selectedIssueForDeletion.status)}>
+                    {selectedIssueForDeletion.status.toUpperCase()}
+                  </Badge>
+                </div>
+              </div>
+
+              {/* Deletion Reason */}
+              <div>
+                <Label htmlFor="deleteReason" className="text-sm font-medium mb-2 block text-red-700">
+                  Reason for Deletion * <span className="text-red-500">(Required for audit trail)</span>
+                </Label>
+                <Textarea
+                  id="deleteReason"
+                  value={deleteReason}
+                  onChange={(e) => setDeleteReason(e.target.value)}
+                  placeholder="Please specify why this issue is being deleted (e.g., spam, duplicate, fake report, inappropriate content, etc.)"
+                  rows={3}
+                  className="border-red-200 focus:border-red-400 focus:ring-red-400"
+                />
+                {!deleteReason.trim() && (
+                  <p className="text-xs text-red-600 mt-1">
+                    * Deletion reason is required for audit and transparency purposes
+                  </p>
+                )}
+              </div>
+
+              {/* Common Reasons */}
+              <div>
+                <Label className="text-sm font-medium mb-2 block">Quick Reasons:</Label>
+                <div className="flex flex-wrap gap-2">
+                  {['Spam Report', 'Duplicate Issue', 'Fake/False Report', 'Inappropriate Content', 'Test Issue', 'Resolved Elsewhere'].map((reason) => (
+                    <Button
+                      key={reason}
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setDeleteReason(reason)}
+                      className="text-xs"
+                    >
+                      {reason}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Confirmation Checkbox */}
+              <div className="flex items-start space-x-3 p-4 bg-red-50 border border-red-200 rounded-lg">
+                <Checkbox
+                  id="deleteConfirm"
+                  checked={deleteConfirmed}
+                  onCheckedChange={(checked) => setDeleteConfirmed(checked as boolean)}
+                  className="mt-1"
+                />
+                <div className="flex-1">
+                  <Label htmlFor="deleteConfirm" className="text-sm font-medium text-red-800 cursor-pointer">
+                    I understand this action is permanent and cannot be undone
+                  </Label>
+                  <p className="text-xs text-red-600 mt-1">
+                    This issue will be completely removed from the system and cannot be recovered.
+                  </p>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex justify-end gap-3 pt-4">
+                <Button 
+                  variant="outline" 
+                  onClick={() => {
+                    setDeleteModalOpen(false);
+                    setSelectedIssueForDeletion(null);
+                    setDeleteReason('');
+                    setDeleteConfirmed(false);
+                  }}
+                  disabled={isDeleting}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleDeleteSubmit}
+                  disabled={!deleteReason.trim() || !deleteConfirmed || isDeleting}
+                  className="bg-red-600 hover:bg-red-700"
+                >
+                  {isDeleting ? (
+                    <span className="flex items-center gap-2">
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                      Deleting...
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-2">
+                      <Trash2 className="h-4 w-4" />
+                      Delete Issue Permanently
                     </span>
                   )}
                 </Button>
