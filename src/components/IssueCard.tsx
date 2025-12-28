@@ -67,13 +67,29 @@ const IssueCard: React.FC<IssueCardProps> = ({
   // Minimum swipe distance (in px) to trigger navigation
   const minSwipeDistance = 50;
 
-  // Check if user has upvoted this issue
+  // Check if user has upvoted this issue - PROTOTYPE VERSION
   useEffect(() => {
-    if (currentUser) {
-      const userUpvotes = JSON.parse(localStorage.getItem('userUpvotes') || '[]');
-      setUpvoted(userUpvotes.includes(id));
-    }
-  }, [id, currentUser]);
+    const checkUserUpvote = () => {
+      if (currentUser) {
+        // PROTOTYPE: Use localStorage to track votes
+        const userUpvotes = JSON.parse(localStorage.getItem('userUpvotes') || '[]');
+        const issueVotes = JSON.parse(localStorage.getItem('issueVotes') || '{}');
+        
+        // Check if user has upvoted this issue
+        setUpvoted(userUpvotes.includes(id));
+        
+        // Use stored vote count if available, otherwise use prop
+        const storedCount = issueVotes[id];
+        if (storedCount !== undefined) {
+          setCurrentUpvoteCount(storedCount);
+        }
+        
+        console.log(`🗳️ PROTOTYPE: Issue ${id} - User voted: ${userUpvotes.includes(id)}, Count: ${storedCount || volunteersCount}`);
+      }
+    };
+
+    checkUserUpvote();
+  }, [id, currentUser, volunteersCount]);
 
   // Update local count when prop changes
   useEffect(() => {
@@ -128,7 +144,7 @@ const IssueCard: React.FC<IssueCardProps> = ({
     }
   };
 
-  // Handle upvote
+  // Handle upvote - PROTOTYPE VERSION (Client-side only)
   const handleUpvote = async (e: React.MouseEvent) => {
     e.preventDefault(); // Prevent navigation to detail page
     e.stopPropagation();
@@ -147,18 +163,11 @@ const IssueCard: React.FC<IssueCardProps> = ({
     setIsUpvoting(true);
 
     try {
+      // PROTOTYPE: Simple client-side upvoting
       const newUpvoteState = !upvoted;
-      const newCount = newUpvoteState ? currentUpvoteCount + 1 : currentUpvoteCount - 1;
+      const newCount = newUpvoteState ? currentUpvoteCount + 1 : Math.max(0, currentUpvoteCount - 1);
       
-      // Update database
-      const { error } = await supabase
-        .from('issues')
-        .update({ volunteers_count: newCount })
-        .eq('id', id);
-
-      if (error) throw error;
-
-      // Update local state
+      // Update local state immediately for responsive UI
       setUpvoted(newUpvoteState);
       setCurrentUpvoteCount(newCount);
       
@@ -167,25 +176,42 @@ const IssueCard: React.FC<IssueCardProps> = ({
         onUpvoteUpdate(id, newCount);
       }
       
-      // Store user's upvote in localStorage
+      // Store user's upvote in localStorage for persistence
       const userUpvotes = JSON.parse(localStorage.getItem('userUpvotes') || '[]');
+      const issueVotes = JSON.parse(localStorage.getItem('issueVotes') || '{}');
+      
       if (newUpvoteState) {
-        userUpvotes.push(id);
+        if (!userUpvotes.includes(id)) {
+          userUpvotes.push(id);
+        }
+        issueVotes[id] = newCount;
       } else {
         const index = userUpvotes.indexOf(id);
         if (index > -1) userUpvotes.splice(index, 1);
+        issueVotes[id] = newCount;
       }
-      localStorage.setItem('userUpvotes', JSON.stringify(userUpvotes));
       
+      localStorage.setItem('userUpvotes', JSON.stringify(userUpvotes));
+      localStorage.setItem('issueVotes', JSON.stringify(issueVotes));
+      
+      // Show success message
       toast({
         title: newUpvoteState ? "Issue upvoted!" : "Upvote removed",
-        description: newUpvoteState ? "Thanks for supporting this issue!" : "You removed your upvote",
+        description: newUpvoteState ? "Your vote has been recorded" : "Your vote has been removed",
       });
+      
+      console.log(`🗳️ PROTOTYPE: ${newUpvoteState ? 'Added' : 'Removed'} vote for issue ${id}. New count: ${newCount}`);
+      
     } catch (error) {
       console.error('Error updating upvote:', error);
+      
+      // Revert local state on error
+      setUpvoted(!upvoted);
+      setCurrentUpvoteCount(currentUpvoteCount);
+      
       toast({
         title: "Error",
-        description: "Failed to update upvote",
+        description: "Failed to update upvote. Please try again.",
         variant: "destructive",
       });
     } finally {

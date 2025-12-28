@@ -10,6 +10,7 @@ import { useAuth } from '@/contexts/SupabaseAuthContext';
 import AuthModal from '@/components/AuthModal';
 import { supabase } from '@/lib/supabase';
 import { toast } from '@/hooks/use-toast';
+import { addDemoVotes } from '@/utils/prototypeVoting';
 
 // Sample data (fallback)
 const issuesData = [
@@ -82,31 +83,38 @@ const issuesData = [
 ];
 
 const categories = ["All", "Infrastructure", "Electricity", "Trash", "Water", "Other"];
-const sortOptions = ["Newest", "Most Comments", "Most Volunteers", "Oldest"];
+const sortOptions = ["Most Voted", "Newest", "Most Comments", "Most Volunteers", "Oldest"];
 
 const Issues = () => {
   const navigate = useNavigate();
   const { currentUser } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
-  const [sortBy, setSortBy] = useState('Newest');
+  const [sortBy, setSortBy] = useState('Most Voted'); // Default to most voted
   const [isFilterExpanded, setIsFilterExpanded] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [issues, setIssues] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // Handle upvote updates from IssueCard
+  // Handle upvote updates from IssueCard - PROTOTYPE VERSION
   const handleUpvoteUpdate = (issueId: string, newCount: number) => {
     setIssues(prevIssues => 
       prevIssues.map(issue => 
         issue.id === issueId 
-          ? { ...issue, volunteersCount: newCount }
+          ? { ...issue, volunteersCount: newCount, upvotesCount: newCount }
           : issue
       )
     );
+    
+    // Also update localStorage
+    const issueVotes = JSON.parse(localStorage.getItem('issueVotes') || '{}');
+    issueVotes[issueId] = newCount;
+    localStorage.setItem('issueVotes', JSON.stringify(issueVotes));
+    
+    console.log(`🗳️ PROTOTYPE: Updated issue ${issueId} vote count to ${newCount}`);
   };
 
-  // Fetch issues from Supabase
+  // Fetch issues from Supabase - PROTOTYPE VERSION
   const fetchIssues = async () => {
     setLoading(true);
     try {
@@ -115,12 +123,18 @@ const Issues = () => {
         .from('issues')
         .select('*')
         .not('status', 'in', '("resolved","closed","pending_approval")') // Exclude resolved, closed, and pending approval issues
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false }); // Default order by newest
 
       if (error) throw error;
 
+      // PROTOTYPE: Load vote counts from localStorage
+      const issueVotes = JSON.parse(localStorage.getItem('issueVotes') || '{}');
+
       // Transform data to match the expected format
       const transformedIssues = data.map(issue => {
+        // Use localStorage vote count if available, otherwise use database value
+        const voteCount = issueVotes[issue.id] !== undefined ? issueVotes[issue.id] : (issue.volunteers_count || issue.upvotes_count || 0);
+        
         return {
           id: issue.id,
           title: issue.title,
@@ -131,12 +145,19 @@ const Issues = () => {
           images: issue.images || (issue.image ? [issue.image] : []), // Multiple images support
           date: formatDate(issue.created_at),
           commentsCount: issue.comments_count || 0,
-          volunteersCount: issue.volunteers_count || 0,
+          volunteersCount: voteCount, // Use localStorage count
+          upvotesCount: voteCount, // Use localStorage count
           status: issue.status
         };
       });
 
       setIssues(transformedIssues);
+      
+      // PROTOTYPE: Add demo votes for newly loaded issues
+      const issueIds = transformedIssues.map(issue => issue.id);
+      addDemoVotes(issueIds);
+      
+      console.log(`🗳️ PROTOTYPE: Loaded ${transformedIssues.length} issues with localStorage vote counts`);
     } catch (error) {
       console.error('Error fetching issues:', error);
       toast({
@@ -153,6 +174,23 @@ const Issues = () => {
 
   useEffect(() => {
     fetchIssues();
+    
+    // PROTOTYPE: Initialize some demo vote counts for testing
+    const initializeDemoVotes = () => {
+      const issueVotes = JSON.parse(localStorage.getItem('issueVotes') || '{}');
+      
+      // Only initialize if no votes exist yet
+      if (Object.keys(issueVotes).length === 0) {
+        // Add some random vote counts for demo purposes
+        const demoVotes = {
+          // These will be replaced with actual issue IDs when they load
+        };
+        localStorage.setItem('issueVotes', JSON.stringify(demoVotes));
+        console.log('🗳️ PROTOTYPE: Initialized demo vote system');
+      }
+    };
+    
+    initializeDemoVotes();
   }, []);
 
   // Refresh issues when component becomes visible (user navigates back)
@@ -208,6 +246,17 @@ const Issues = () => {
                     : issue
                 )
               );
+              
+              // Show toast for vote updates
+              if (payload.old && payload.new.volunteers_count !== payload.old.volunteers_count) {
+                const voteChange = payload.new.volunteers_count - payload.old.volunteers_count;
+                if (voteChange > 0) {
+                  toast({
+                    title: "Issue Upvoted",
+                    description: `An issue received ${voteChange} new vote${voteChange > 1 ? 's' : ''}`,
+                  });
+                }
+              }
             }
           }
         }
@@ -290,6 +339,8 @@ const Issues = () => {
     return matchesSearch && matchesCategory;
   }).sort((a, b) => {
     switch (sortBy) {
+      case 'Most Voted':
+        return b.volunteersCount - a.volunteersCount;
       case 'Most Comments':
         return b.commentsCount - a.commentsCount;
       case 'Most Volunteers':
