@@ -65,6 +65,50 @@ const OnboardingRoute = ({ children }: { children: React.ReactNode }) => {
   return <>{children}</>;
 };
 
+// OfficialProtectedRoute component to handle official authentication and onboarding
+const OfficialProtectedRoute = ({ children }: { children: React.ReactNode }) => {
+  const { currentUser, isNewUser, userProfile, loading } = useAuth();
+  
+  // Show loading while auth state is being determined
+  if (loading) {
+    return <LoadingSpinner fullScreen message="Loading..." />;
+  }
+  
+  // If not logged in, redirect to official login
+  if (!currentUser) {
+    return <Navigate to="/official/login" replace />;
+  }
+  
+  // If new user or onboarding not complete, redirect to official onboarding
+  if (isNewUser || !userProfile?.is_onboarding_complete) {
+    return <Navigate to="/official/onboarding" replace />;
+  }
+  
+  return <>{children}</>;
+};
+
+// OfficialOnboardingRoute component to handle official onboarding
+const OfficialOnboardingRoute = ({ children }: { children: React.ReactNode }) => {
+  const { currentUser, isNewUser, userProfile, loading } = useAuth();
+  
+  // Show loading while auth state is being determined
+  if (loading) {
+    return <LoadingSpinner fullScreen message="Loading..." />;
+  }
+  
+  // If not logged in, redirect to official login
+  if (!currentUser) {
+    return <Navigate to="/official/login" replace />;
+  }
+  
+  // If onboarding is complete, redirect to dashboard
+  if (!isNewUser && userProfile?.is_onboarding_complete) {
+    return <Navigate to="/official/dashboard" replace />;
+  }
+  
+  return <>{children}</>;
+};
+
 // HomeRoute component to handle /home route
 const HomeRoute = () => {
   const { currentUser, isNewUser, loading } = useAuth();
@@ -183,11 +227,41 @@ const AppRoutes = () => {
         
         {/* Official Portal Routes */}
         <Route path="/official/login" element={<SafeRoute><OfficialLogin /></SafeRoute>} />
-        <Route path="/official/onboarding" element={<SafeRoute><OfficialOnboarding /></SafeRoute>} />
-        <Route path="/official/dashboard" element={<SafeRoute><OfficialDashboard /></SafeRoute>} />
-        <Route path="/official/issue/:id" element={<SafeRoute><IssueDetails /></SafeRoute>} />
-        <Route path="/official/issue/:id/upload-resolution" element={<SafeRoute><UploadResolution /></SafeRoute>} />
-        <Route path="/official/profile" element={<SafeRoute><OfficialProfile /></SafeRoute>} />
+        <Route path="/official/onboarding" element={
+          <SafeRoute>
+            <OfficialOnboardingRoute>
+              <OfficialOnboarding />
+            </OfficialOnboardingRoute>
+          </SafeRoute>
+        } />
+        <Route path="/official/dashboard" element={
+          <SafeRoute>
+            <OfficialProtectedRoute>
+              <OfficialDashboard />
+            </OfficialProtectedRoute>
+          </SafeRoute>
+        } />
+        <Route path="/official/issue/:id" element={
+          <SafeRoute>
+            <OfficialProtectedRoute>
+              <IssueDetails />
+            </OfficialProtectedRoute>
+          </SafeRoute>
+        } />
+        <Route path="/official/issue/:id/upload-resolution" element={
+          <SafeRoute>
+            <OfficialProtectedRoute>
+              <UploadResolution />
+            </OfficialProtectedRoute>
+          </SafeRoute>
+        } />
+        <Route path="/official/profile" element={
+          <SafeRoute>
+            <OfficialProtectedRoute>
+              <OfficialProfile />
+            </OfficialProtectedRoute>
+          </SafeRoute>
+        } />
         
         <Route path="*" element={<SafeRoute><NotFound /></SafeRoute>} />
       </Routes>

@@ -46,7 +46,7 @@ const formSchema = z.object({
 });
 
 const UserOnboarding = () => {
-  const { currentUser } = useAuth();
+  const { currentUser, refreshProfile } = useAuth();
   const navigate = useNavigate();
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -83,6 +83,20 @@ const UserOnboarding = () => {
 
     setIsSubmitting(true);
     try {
+      console.log('Creating citizen profile with data:', {
+        id: currentUser.id,
+        email: currentUser.email,
+        full_name: values.fullName,
+        age: parseInt(values.age),
+        gender: values.gender,
+        address: values.address,
+        city: values.city,
+        state: values.state,
+        zip_code: values.zipCode,
+        bio: values.bio || '',
+        is_onboarding_complete: true
+      });
+
       // Add the user profile to Supabase
       const { error } = await supabase
         .from('user_profiles')
@@ -96,27 +110,50 @@ const UserOnboarding = () => {
           city: values.city,
           state: values.state,
           zip_code: values.zipCode,
-          role: 'resident', // Default role for all users
+          user_type: 'citizen', // Use user_type instead of role
           bio: values.bio || '',
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
           is_onboarding_complete: true,
         });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Database error:', error);
+        throw error;
+      }
+
+      console.log('Profile created successfully, refreshing auth context...');
 
       toast({
         title: "Profile created",
         description: "Your profile has been successfully created!",
       });
       
-      // Redirect to dashboard after successful profile creation
-      navigate('/dashboard');
+      // Refresh the auth context to update isNewUser status
+      await refreshProfile();
+      
+      // Small delay to ensure context is updated
+      setTimeout(() => {
+        console.log('Navigating to dashboard...');
+        navigate('/dashboard');
+      }, 500);
     } catch (error) {
       console.error("Error creating profile:", error);
+      
+      // Provide specific error messages
+      let errorMessage = "An error occurred while creating your profile. Please try again.";
+      
+      if (error.message?.includes('column') || error.message?.includes('schema')) {
+        errorMessage = "Database schema error. Please contact support or run the database setup script.";
+      } else if (error.message?.includes('permission') || error.message?.includes('policy')) {
+        errorMessage = "Permission error. Please ensure you're logged in properly.";
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
       toast({
         title: "Failed to create profile",
-        description: "An error occurred while creating your profile. Please try again.",
+        description: errorMessage,
         variant: "destructive",
       });
     } finally {

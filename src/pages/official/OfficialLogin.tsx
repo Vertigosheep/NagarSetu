@@ -35,18 +35,13 @@ const OfficialLogin: React.FC = () => {
 
       if (profileError) throw profileError;
 
-      // TEMPORARY: Allow all user types for testing
-      // TODO: In production, uncomment the check below to restrict to officials only
-      /*
-      if (profile.user_type !== 'official') {
-        await supabase.auth.signOut();
-        throw new Error('This portal is for authorized department officials only.');
-      }
-      */
+      // Check if user is authorized (optional - can be enabled for production)
+      // if (profile.user_type !== 'official') {
+      //   await supabase.auth.signOut();
+      //   throw new Error('This portal is for authorized department officials only.');
+      // }
 
-      // DEMO MODE: Skip onboarding, go directly to dashboard
-      // TODO: In production, uncomment the onboarding check below
-      /*
+      // Check if user needs onboarding
       if (!profile.is_onboarding_complete || !profile.department || !profile.employee_id) {
         // First-time login - redirect to onboarding
         navigate('/official/onboarding');
@@ -54,10 +49,6 @@ const OfficialLogin: React.FC = () => {
         // Navigate to official dashboard
         navigate('/official/dashboard');
       }
-      */
-      
-      // For demo: Always go to dashboard
-      navigate('/official/dashboard');
     } catch (err: any) {
       setError(err.message || 'Invalid credentials. Please try again.');
     } finally {
@@ -67,12 +58,7 @@ const OfficialLogin: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-green-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 flex items-center justify-center p-4">
-      {/* Demo Mode Banner */}
-      <div className="fixed top-0 left-0 right-0 bg-gradient-to-r from-purple-500 to-pink-500 text-white text-center py-2 px-4 text-sm font-medium z-50 shadow-lg">
-        🎬 DEMO MODE: Onboarding skipped • All issues visible • Any account can login
-      </div>
-      
-      <div className="w-full max-w-md mt-12">
+      <div className="w-full max-w-md">{/* Removed mt-12 since no banner */}
         {/* Header */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-600 rounded-full mb-4">
@@ -155,14 +141,6 @@ const OfficialLogin: React.FC = () => {
               {loading ? 'Signing in...' : 'Login'}
             </button>
           </form>
-        </div>
-
-        {/* Footer Note */}
-        <div className="mt-6 p-4 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg">
-          <p className="text-xs text-center text-purple-800 dark:text-purple-300">
-            <strong>🎬 Demo Mode:</strong> Login with any account to see the worker dashboard. 
-            Profile setup is skipped and all issues are visible for demonstration purposes.
-          </p>
         </div>
       </div>
     </div>

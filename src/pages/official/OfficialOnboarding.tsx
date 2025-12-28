@@ -2,9 +2,11 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { User, Building, IdCard, MapPin, Phone, Save } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/contexts/SupabaseAuthContext';
 
 const OfficialOnboarding: React.FC = () => {
   const navigate = useNavigate();
+  const { refreshProfile } = useAuth();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [formData, setFormData] = useState({
@@ -66,8 +68,16 @@ const OfficialOnboarding: React.FC = () => {
         throw updateError;
       }
 
-      // Navigate to dashboard
-      navigate('/official/dashboard');
+      console.log('Profile updated successfully, refreshing auth context...');
+      
+      // Refresh the auth context to update isNewUser status
+      await refreshProfile();
+      
+      // Small delay to ensure context is updated
+      setTimeout(() => {
+        console.log('Navigating to dashboard...');
+        navigate('/official/dashboard');
+      }, 500);
     } catch (err: any) {
       console.error('Error completing onboarding:', err);
       setError(err.message || 'Failed to complete profile setup');
