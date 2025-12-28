@@ -40,6 +40,7 @@ import NotificationCenter from '@/components/NotificationCenter';
 import IssueDetailModal from '@/components/IssueDetailModal';
 import IssueMap from '@/components/IssueMap';
 import SimpleMap from '@/components/SimpleMap';
+import ReportedIssuesPanel from '@/components/ReportedIssuesPanel';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
@@ -834,11 +835,12 @@ export default function AuthorityDashboard() {
 
         {/* Main Dashboard Tabs */}
         <Tabs defaultValue="issues" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="issues">Issue Management</TabsTrigger>
+            <TabsTrigger value="reports">Reported Issues</TabsTrigger>
             <TabsTrigger value="analytics">Analytics</TabsTrigger>
             <TabsTrigger value="map">Issue Map</TabsTrigger>
-            <TabsTrigger value="reports">Reports</TabsTrigger>
+            <TabsTrigger value="reports-tab">Reports</TabsTrigger>
           </TabsList>
 
           {/* Issue Management Tab */}
@@ -971,6 +973,11 @@ export default function AuthorityDashboard() {
             </Card>
           </TabsContent>
 
+          {/* Reported Issues Tab */}
+          <TabsContent value="reports" className="space-y-6">
+            <ReportedIssuesPanel showOnlyPending={false} />
+          </TabsContent>
+
           {/* Analytics Tab */}
           <TabsContent value="analytics" className="space-y-6">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -1042,7 +1049,7 @@ export default function AuthorityDashboard() {
           </TabsContent>
 
           {/* Reports Tab */}
-          <TabsContent value="reports" className="space-y-6">
+          <TabsContent value="reports-tab" className="space-y-6">
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center">

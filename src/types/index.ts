@@ -37,6 +37,8 @@ export interface Issue {
   comments_count: number;
   volunteers_count: number;
   upvotes_count?: number;
+  is_reported?: boolean;
+  report_count?: number;
 }
 
 export interface Event {

@@ -8,10 +8,15 @@ import {
   User,
   LogOut,
   Filter,
-  ArrowUpDown
+  ArrowUpDown,
+  Flag,
+  Eye
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { OfficialDashboardStats, OfficialTaskCard, User as UserType } from '@/types';
+import ReportIssueModal from '@/components/ReportIssueModal';
+import { getMyReports } from '@/services/issueReportingService';
+import { toast } from '@/hooks/use-toast';
 
 const OfficialDashboard: React.FC = () => {
   const navigate = useNavigate();
@@ -28,10 +33,21 @@ const OfficialDashboard: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'priority'>('newest');
+  
+  // Report functionality state
+  const [reportModalOpen, setReportModalOpen] = useState(false);
+  const [selectedIssueForReport, setSelectedIssueForReport] = useState<OfficialTaskCard | null>(null);
+  const [myReports, setMyReports] = useState<any[]>([]);
+  const [showReports, setShowReports] = useState(false);
 
   useEffect(() => {
     fetchUserAndData();
     setupRealtimeSubscription();
+    
+    // Fetch reports if user is Pradhan
+    if (user?.email === 'abhitest1290@gmail.com') {
+      fetchMyReports();
+    }
     
     // Set up interval to check for new unassigned issues (for Pradhan)
     const checkForNewIssues = async () => {
@@ -273,6 +289,30 @@ const OfficialDashboard: React.FC = () => {
     navigate('/official/login');
   };
 
+  const fetchMyReports = async () => {
+    try {
+      const reports = await getMyReports();
+      setMyReports(reports);
+    } catch (error) {
+      console.error('Error fetching reports:', error);
+      setMyReports([]); // Set empty array on error
+    }
+  };
+
+  const handleReportIssue = (task: OfficialTaskCard, event: React.MouseEvent) => {
+    event.stopPropagation(); // Prevent navigation to issue details
+    setSelectedIssueForReport(task);
+    setReportModalOpen(true);
+  };
+
+  const handleReportSubmitted = () => {
+    fetchMyReports(); // Refresh reports list
+    toast({
+      title: "Issue Reported",
+      description: "Your report has been submitted to the admin for review",
+    });
+  };
+
   const getUrgencyColor = (urgency?: string) => {
     switch (urgency) {
       case 'critical': return 'text-red-600 bg-red-100 dark:bg-red-900/20';
@@ -340,6 +380,22 @@ const OfficialDashboard: React.FC = () => {
               </p>
             </div>
             <div className="flex items-center gap-4">
+              {/* Show Reports Button for Pradhan */}
+              {user?.email === 'abhitest1290@gmail.com' && (
+                <button
+                  onClick={() => setShowReports(!showReports)}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+                    showReports 
+                      ? 'bg-red-100 text-red-700 dark:bg-red-900/20' 
+                      : 'hover:bg-gray-100 dark:hover:bg-gray-700'
+                  }`}
+                >
+                  <Flag className="w-4 h-4" />
+                  <span className="text-sm font-medium">
+                    My Reports ({myReports.length})
+                  </span>
+                </button>
+              )}
               <button
                 onClick={() => navigate('/official/profile')}
                 className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
@@ -360,6 +416,48 @@ const OfficialDashboard: React.FC = () => {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* My Reports Section - Show only for Pradhan when toggled */}
+        {user?.email === 'abhitest1290@gmail.com' && showReports && (
+          <div className="mb-8">
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-6">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
+                <Flag className="w-5 h-5 text-red-500" />
+                My Reported Issues ({myReports.length})
+              </h2>
+              {myReports.length === 0 ? (
+                <p className="text-gray-600 dark:text-gray-400 text-center py-8">
+                  You haven't reported any issues yet.
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {myReports.map((report) => (
+                    <div key={report.id} className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                      <div className="flex-1">
+                        <h3 className="font-medium text-gray-900 dark:text-white">
+                          {report.issue?.title}
+                        </h3>
+                        <div className="flex items-center gap-4 text-sm text-gray-600 dark:text-gray-400 mt-1">
+                          <span>Reason: {report.report_reason}</span>
+                          <span>•</span>
+                          <span>Reported: {new Date(report.created_at).toLocaleDateString()}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                          report.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                          report.status === 'approved' ? 'bg-green-100 text-green-800' :
+                          'bg-red-100 text-red-800'
+                        }`}>
+                          {report.status.toUpperCase()}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
           {/* New Assigned */}
@@ -482,10 +580,9 @@ const OfficialDashboard: React.FC = () => {
             </div>
           ) : (
             filteredTasks.map((task) => (
-              <button
+              <div
                 key={task.id}
-                onClick={() => navigate(`/official/issue/${task.id}`)}
-                className="w-full bg-white dark:bg-gray-800 rounded-lg shadow-sm p-6 hover:shadow-md transition-shadow text-left"
+                className="w-full bg-white dark:bg-gray-800 rounded-lg shadow-sm p-6 hover:shadow-md transition-shadow"
               >
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex-1">
@@ -496,6 +593,12 @@ const OfficialDashboard: React.FC = () => {
                       {getUrgencyIcon(task.urgency) && (
                         <span className={`text-xs px-2 py-1 rounded-full font-semibold ${getUrgencyColor(task.urgency)}`}>
                           {getUrgencyIcon(task.urgency)} {task.urgency?.toUpperCase()}
+                        </span>
+                      )}
+                      {/* Show if issue is reported */}
+                      {task.is_reported && (
+                        <span className="text-xs px-2 py-1 rounded-full font-semibold bg-red-100 text-red-800">
+                          🚩 REPORTED
                         </span>
                       )}
                     </div>
@@ -524,15 +627,42 @@ const OfficialDashboard: React.FC = () => {
                       {task.status.replace('_', ' ').toUpperCase()}
                     </span>
                   </div>
-                  <span className="text-blue-600 dark:text-blue-400 font-medium">
-                    View Details →
-                  </span>
+                  <div className="flex items-center gap-2">
+                    {/* Report Button - Show only for Pradhan */}
+                    {user?.email === 'abhitest1290@gmail.com' && !task.is_reported && (
+                      <button
+                        onClick={(e) => handleReportIssue(task, e)}
+                        className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+                      >
+                        <Flag className="w-3 h-3" />
+                        Report
+                      </button>
+                    )}
+                    <button
+                      onClick={() => navigate(`/official/issue/${task.id}`)}
+                      className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors"
+                    >
+                      <Eye className="w-3 h-3" />
+                      View Details
+                    </button>
+                  </div>
                 </div>
-              </button>
+              </div>
             ))
           )}
         </div>
       </main>
+
+      {/* Report Issue Modal */}
+      <ReportIssueModal
+        issue={selectedIssueForReport}
+        isOpen={reportModalOpen}
+        onClose={() => {
+          setReportModalOpen(false);
+          setSelectedIssueForReport(null);
+        }}
+        onReportSubmitted={handleReportSubmitted}
+      />
     </div>
   );
 };
